@@ -3,19 +3,23 @@ import torch
 import torch.nn.functional as F
 
 
-def iou_score(output, target):
-    smooth = 1e-5
-
+def iou_score(output, target, threshold=0.5, smooth=1e-5):
     if torch.is_tensor(output):
-        output = torch.sigmoid(output).data.cpu().numpy()
+        output = torch.sigmoid(output).detach().cpu().numpy()
     if torch.is_tensor(target):
-        target = target.data.cpu().numpy()
-    output_ = output > 0.5
-    target_ = target > 0.5
-    intersection = (output_ & target_).sum()
-    union = (output_ | target_).sum()
+        target = target.detach().cpu().numpy()
 
-    return (intersection + smooth) / (union + smooth)
+    output = output > threshold
+    target = target > threshold
+    
+    intersection = (output & target).sum(axis=(1,2,3))  # Asumiendo (B,C,H,W)
+    union = (output | target).sum(axis=(1,2,3))
+    
+    # Evitar división por cero
+    iou = np.where(union == 0, 1.0, (intersection + smooth) / (union + smooth))
+    
+    return np.mean(iou)
+
 
 
 def dice_coef(output, target):

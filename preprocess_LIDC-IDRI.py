@@ -1,13 +1,25 @@
 import os
-from pathlib import Path
 import numpy as np
+from glob import glob
+from pathlib import Path
 from lungmask import mask
 import SimpleITK as sitk
 from PIL import Image
-import random
 from tqdm import tqdm
-import shutil
 import cv2
+from sklearn.model_selection import train_test_split
+
+# Set paths
+input_base = 'inputs/LIDC-IDRI/stage1_train/images'
+output_base = 'inputs/processed_data_512'
+output_images_train = os.path.join(output_base, 'images/train')
+output_images_val = os.path.join(output_base, 'images/val')
+output_masks_train = os.path.join(output_base, 'masks/train/0')
+output_masks_val = os.path.join(output_base, 'masks/val/0')
+
+# Create output directories
+for path in [output_images_train, output_images_val, output_masks_train, output_masks_val]:
+    os.makedirs(path, exist_ok=True)
 
 def load_dicom_series(dicom_dir):
     """Load DICOM series using SimpleITK"""
@@ -15,142 +27,65 @@ def load_dicom_series(dicom_dir):
         reader = sitk.ImageSeriesReader()
         dicom_names = reader.GetGDCMSeriesFileNames(dicom_dir)
         dicom_names = [f for f in dicom_names if not f.lower().endswith('.xml')]
-        
         if not dicom_names:
-            print(f"No DICOM files found in {dicom_dir}")
             return None, []
-            
         reader.SetFileNames(dicom_names)
         image = reader.Execute()
         return image, dicom_names
-        
     except Exception as e:
-        print(f"Error loading DICOM with SimpleITK: {e}")
+        print(f"Error loading DICOM: {e}")
         return None, []
 
 def normalize_dicom_image(image_array):
     """Normalize DICOM image array"""
-    # Apply window/level normalization for CT images
-    window_center = -600  # Typical for lung window
-    window_width = 1500   # Typical for lung window
-    
-    min_value = window_center - window_width/2
-    max_value = window_center + window_width/2
-    
-    # Clip values to the window range and normalize
+    window_center = -600
+    window_width = 1500
+    min_value = window_center - window_width / 2
+    max_value = window_center + window_width / 2
     image_array = np.clip(image_array, min_value, max_value)
     image_array = ((image_array - min_value) / (max_value - min_value) * 255).astype(np.uint8)
-    
-    # Apply morphological operations to clean up the image
-    kernel = np.ones((3,3), np.uint8)
+    kernel = np.ones((3, 3), np.uint8)
     image_array = cv2.morphologyEx(image_array, cv2.MORPH_OPEN, kernel)
-    
     return image_array
 
-# Set paths
-input_base = 'inputs/LIDC-IDRI/stage1_train/images'
-output_images = 'inputs/processed_data_512/images'
-output_masks = 'inputs/processed_data_512/masks/0'
+# Get list of patient folders
+all_folders = [f'LIDC-IDRI-{i:04d}' for i in range(1, 121)]
 
-# Create output directories
-os.makedirs(output_images, exist_ok=True)
-os.makedirs(output_masks, exist_ok=True)
+# Split into train/val patients
+train_patients, val_patients = train_test_split(all_folders, test_size=0.2, random_state=42)
+print(f"📚 Pacientes en entrenamiento: {len(train_patients)}")
+print(f"📊 Pacientes en validación: {len(val_patients)}")
 
-# Initialize counter for file naming
+# Start processing
 file_counter = 1
-valid_pairs = []
 
-# Process each folder
-for folder_id in range(1, 121):
-    folder_name = f'LIDC-IDRI-{folder_id:04d}'
-    folder_path = os.path.join(input_base, folder_name)
-    
-    if not os.path.exists(folder_path):
-        continue
-    
-    print(f"\nProcessing {folder_name}")
-    
-    try:
-        # Load DICOM series
-        dicom_image, dicom_files = load_dicom_series(folder_path)
-        
-        if dicom_image is None or not dicom_files:
-            print(f"Could not load DICOM series from {folder_path}")
+for patient_list, img_output_path, mask_output_path, tag in [
+    (train_patients, output_images_train, output_masks_train, "Train"),
+    (val_patients, output_images_val, output_masks_val, "Val")
+]:
+    for folder_name in patient_list:
+        folder_path = os.path.join(input_base, folder_name)
+        if not os.path.exists(folder_path):
             continue
-        
-        # Get array from DICOM series
-        series_array = sitk.GetArrayFromImage(dicom_image)
-        num_slices = series_array.shape[0]
-        
-        # Apply lungmask to entire volume
-        print(f"Applying lungmask to {num_slices} files...")
-        lung_mask_3d = mask.apply(dicom_image)
-        
-        if lung_mask_3d is None:
-            print(f"Could not generate mask for {folder_path}")
-            continue
-        
-        # Process each slice with progress bar
-        for slice_idx in tqdm(range(num_slices), desc=f"Processing {folder_name}", unit="files"):
-            try:
-                # Get and normalize the image slice
+        print(f"\n📂 Procesando {tag}: {folder_name}")
+        try:
+            dicom_image, dicom_files = load_dicom_series(folder_path)
+            if dicom_image is None:
+                continue
+            series_array = sitk.GetArrayFromImage(dicom_image)
+            lung_mask_3d = mask.apply(dicom_image)
+            for slice_idx in tqdm(range(series_array.shape[0]), desc=folder_name, unit="slice"):
                 image_slice = normalize_dicom_image(series_array[slice_idx])
-                
-                # Get and process mask slice
                 mask_slice = lung_mask_3d[slice_idx].astype(np.uint8)
-                
-                # Skip if mask is empty or too small
                 if np.sum(mask_slice) < 1000:
                     continue
-                
-                # Normalize mask to binary
                 mask_slice = (mask_slice > 0).astype(np.uint8) * 255
-                
-                # Save image and mask
-                filename = f'{file_counter:05d}.png'
-                
-                Image.fromarray(image_slice).save(os.path.join(output_images, filename))
-                Image.fromarray(mask_slice).save(os.path.join(output_masks, filename))
-                
-                valid_pairs.append(file_counter)
+                filename = f"{file_counter:05d}.png"
+                Image.fromarray(image_slice).save(os.path.join(img_output_path, filename))
+                Image.fromarray(mask_slice).save(os.path.join(mask_output_path, filename))
                 file_counter += 1
-                
-            except Exception as e:
-                print(f"Error processing slice {slice_idx} from {folder_path}: {str(e)}")
-                continue
-                
-    except Exception as e:
-        print(f"Error processing folder {folder_path}: {str(e)}")
-        continue
+        except Exception as e:
+            print(f"Error en paciente {folder_name}: {e}")
+            continue
 
-print(f"Generated {len(valid_pairs)} valid pairs")
-
-# Shuffle files while maintaining pairs
-if valid_pairs:
-    print("Shuffling files...")
-    new_indices = list(range(1, len(valid_pairs) + 1))
-    random.shuffle(new_indices)
-    
-    # Create temporary directories
-    temp_images = output_images + '_temp'
-    temp_masks = output_masks + '_temp'
-    os.makedirs(temp_images, exist_ok=True)
-    os.makedirs(temp_masks, exist_ok=True)
-    
-    # Move files with new names
-    for old_idx, new_idx in tqdm(zip(valid_pairs, new_indices), desc="Shuffling files"):
-        old_name = f'{old_idx:05d}.png'
-        new_name = f'{new_idx:05d}.png'
-        
-        shutil.move(os.path.join(output_images, old_name),
-                   os.path.join(temp_images, new_name))
-        shutil.move(os.path.join(output_masks, old_name),
-                   os.path.join(temp_masks, new_name))
-    
-    # Replace original directories with shuffled ones
-    shutil.rmtree(output_images)
-    shutil.rmtree(output_masks)
-    os.rename(temp_images, output_images)
-    os.rename(temp_masks, output_masks)
-    
-print("Processing complete!")
+print(f"\n✅ Procesamiento completo. Total de imágenes procesadas: {file_counter - 1}")
