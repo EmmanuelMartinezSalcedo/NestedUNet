@@ -1,13 +1,12 @@
 import os
 import numpy as np
-from glob import glob
-from pathlib import Path
 from lungmask import mask
 import SimpleITK as sitk
 from PIL import Image
 from tqdm import tqdm
 import cv2
 from sklearn.model_selection import train_test_split
+import shutil
 
 # Set paths
 input_base = 'inputs/LIDC-IDRI/stage1_train/images'
@@ -19,10 +18,11 @@ output_masks_val = os.path.join(output_base, 'masks/val/0')
 
 # Create output directories
 for path in [output_images_train, output_images_val, output_masks_train, output_masks_val]:
-    os.makedirs(path, exist_ok=True)
+    if os.path.exists(path):
+        shutil.rmtree(path)
+    os.makedirs(path)
 
 def load_dicom_series(dicom_dir):
-    """Load DICOM series using SimpleITK"""
     try:
         reader = sitk.ImageSeriesReader()
         dicom_names = reader.GetGDCMSeriesFileNames(dicom_dir)
@@ -37,7 +37,6 @@ def load_dicom_series(dicom_dir):
         return None, []
 
 def normalize_dicom_image(image_array):
-    """Normalize DICOM image array"""
     window_center = -600
     window_width = 1500
     min_value = window_center - window_width / 2
@@ -53,8 +52,8 @@ all_folders = [f'LIDC-IDRI-{i:04d}' for i in range(1, 121)]
 
 # Split into train/val patients
 train_patients, val_patients = train_test_split(all_folders, test_size=0.2, random_state=42)
-print(f"📚 Pacientes en entrenamiento: {len(train_patients)}")
-print(f"📊 Pacientes en validación: {len(val_patients)}")
+print(f"Pacientes en entrenamiento: {len(train_patients)}")
+print(f"Pacientes en validación: {len(val_patients)}")
 
 # Start processing
 file_counter = 1
@@ -67,7 +66,7 @@ for patient_list, img_output_path, mask_output_path, tag in [
         folder_path = os.path.join(input_base, folder_name)
         if not os.path.exists(folder_path):
             continue
-        print(f"\n📂 Procesando {tag}: {folder_name}")
+        print(f"\nProcesando {tag}: {folder_name}")
         try:
             dicom_image, dicom_files = load_dicom_series(folder_path)
             if dicom_image is None:
@@ -77,8 +76,8 @@ for patient_list, img_output_path, mask_output_path, tag in [
             for slice_idx in tqdm(range(series_array.shape[0]), desc=folder_name, unit="slice"):
                 image_slice = normalize_dicom_image(series_array[slice_idx])
                 mask_slice = lung_mask_3d[slice_idx].astype(np.uint8)
-                if np.sum(mask_slice) < 1000:
-                    continue
+                # if np.sum(mask_slice) < 1000:
+                #     continue
                 mask_slice = (mask_slice > 0).astype(np.uint8) * 255
                 filename = f"{file_counter:05d}.png"
                 Image.fromarray(image_slice).save(os.path.join(img_output_path, filename))
@@ -88,4 +87,4 @@ for patient_list, img_output_path, mask_output_path, tag in [
             print(f"Error en paciente {folder_name}: {e}")
             continue
 
-print(f"\n✅ Procesamiento completo. Total de imágenes procesadas: {file_counter - 1}")
+print(f"\nProcesamiento completo. Total de imágenes procesadas: {file_counter - 1}")

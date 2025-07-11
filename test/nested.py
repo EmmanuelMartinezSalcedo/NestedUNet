@@ -14,7 +14,7 @@ from archs import NestedUNet
 
 # --- Configuración global ---
 CONFIG_PATH = 'models/processed_data_512_NestedUNet_binary_wDS/config.yml'
-WEIGHTS_PATH = 'models/processed_data_512_NestedUNet_binary_wDS/checkpoints/model_epoch_1.pth'
+WEIGHTS_PATH = 'models/processed_data_512_NestedUNet_binary_wDS/best_model.pth'
 OUTPUT_FOLDER = 'outputs/nested/'
 
 # --- Funciones utilitarias ---
