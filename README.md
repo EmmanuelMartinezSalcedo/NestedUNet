@@ -1,109 +1,70 @@
-# PyTorch implementation of UNet++ (Nested U-Net)
-[![MIT License](http://img.shields.io/badge/license-MIT-blue.svg?style=flat)](LICENSE)
+# UNet++ con mecanismos de atención
 
-This repository contains code for a image segmentation model based on [UNet++: A Nested U-Net Architecture for Medical Image Segmentation](https://arxiv.org/abs/1807.10165) implemented in PyTorch.
+Este repositorio contiene una implementación de UNet++ usando mecanismos de atención para proyecto de tesis.
 
-[**NEW**] Add support for multi-class segmentation dataset.
+## Requerimentos
 
-[**NEW**] Add support for PyTorch 1.x.
-
-
-## Requirements
 - PyTorch 1.x or 0.41
 
-## Installation
-1. Create an anaconda environment.
+## Instalación
+
+1. Crear un entorno de python (Se recomienda Conda)
+
 ```sh
 conda create -n=<env_name> python=3.6 anaconda
 conda activate <env_name>
 ```
-2. Install PyTorch.
+
+2. Instalar PyTorch.
+
 ```sh
 conda install pytorch torchvision cudatoolkit=10.1 -c pytorch
 ```
-3. Install pip packages.
+
+3. Instalar paquetes necesarios.
+
 ```sh
 pip install -r requirements.txt
 ```
 
-## Training on [2018 Data Science Bowl](https://www.kaggle.com/c/data-science-bowl-2018) dataset
-1. Download dataset from [here](https://www.kaggle.com/c/data-science-bowl-2018/data) to inputs/ and unzip. The file structure is the following:
+## Datos de entrenamiento
+
+1. Descarga el dataset desde la página de LIDC-IDRI y agreguelos de la siguiente manera
+
 ```
-inputs
-└── data-science-bowl-2018
-    ├── stage1_train
-    |   ├── 00ae65...
-    │   │   ├── images
-    │   │   │   └── 00ae65...
-    │   │   └── masks
-    │   │       └── 00ae65...            
-    │   ├── ...
-    |
-    ...
+.
+└── input/
+    └── LIDC-IDRI/
+        ├── stage1_train/
+        │   └── images/
+        │       ├── LIDC_IDRI-0001/
+        │       │   ├── 1-001.dcm
+        │       │   ├── 1-002.dcm
+        │       │   └── ...
+        │       └── ...
+        └── stage2_test/
+            ├── LIDC-IDRI-0001/
+            │   ├── 1-001.dcm
+            │   ├── 1-002.dcm
+            │   └── ...
+            └── ...
 ```
-2. Preprocess.
+
+2. Preprocesamiento.
+
 ```sh
-python preprocess_dsb2018.py
+python preprocess_LIDC-IDRI.pyy
 ```
-3. Train the model.
-```sh
-python train.py --dataset dsb2018_96 --arch NestedUNet
-```
+
+3. Entrenamiento
+
+El archivo de entrenamiento se encuentra en train.py
+
 4. Evaluate.
+
 ```sh
-python val.py --name dsb2018_96_NestedUNet_woDS
+python test/original.py
+python test/groundtruth.py
+python test/nested.py
+python test/evaluate.py
 ```
-### (Optional) Using LovaszHingeLoss
-1. Clone LovaszSoftmax from [bermanmaxim/LovaszSoftmax](https://github.com/bermanmaxim/LovaszSoftmax).
-```
-git clone https://github.com/bermanmaxim/LovaszSoftmax.git
-```
-2. Train the model with LovaszHingeLoss.
-```
-python train.py --dataset dsb2018_96 --arch NestedUNet --loss LovaszHingeLoss
-```
-
-## Training on original dataset
-Make sure to put the files as the following structure (e.g. the number of classes is 2):
-```
-inputs
-└── <dataset name>
-    ├── images
-    |   ├── 0a7e06.jpg
-    │   ├── 0aab0a.jpg
-    │   ├── 0b1761.jpg
-    │   ├── ...
-    |
-    └── masks
-        ├── 0
-        |   ├── 0a7e06.png
-        |   ├── 0aab0a.png
-        |   ├── 0b1761.png
-        |   ├── ...
-        |
-        └── 1
-            ├── 0a7e06.png
-            ├── 0aab0a.png
-            ├── 0b1761.png
-            ├── ...
-```
-
-1. Train the model.
-```
-python train.py --dataset <dataset name> --arch NestedUNet --img_ext .jpg --mask_ext .png
-```
-2. Evaluate.
-```
-python val.py --name <dataset name>_NestedUNet_woDS
-```
-
-## Results
-### DSB2018 (96x96)
-
-Here is the results on DSB2018 dataset (96x96) with LovaszHingeLoss.
-
-| Model                           |   IoU   |  Loss   |
-|:------------------------------- |:-------:|:-------:|
-| U-Net                           |  0.839  |  0.365  |
-| Nested U-Net                    |  0.842  |**0.354**|
-| Nested U-Net w/ Deepsupervision |**0.843**|  0.362  |
