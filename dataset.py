@@ -3,7 +3,8 @@ import cv2
 import numpy as np
 import torch
 import torch.utils.data
-
+import random
+from torch.utils.data import IterableDataset, DataLoader
 
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, img_ids, img_dir, mask_dir, img_ext, mask_ext, transform=None):
@@ -37,8 +38,7 @@ class Dataset(torch.utils.data.Dataset):
         
         img = img[..., None]  # [H, W, 1]
 
-        # Construct mask path
-        mask_path = os.path.join(self.mask_dir, "0", img_id + self.mask_ext)
+        mask_path = os.path.join(self.mask_dir, img_id + self.mask_ext)
         
         # Check if mask file exists
         if not os.path.exists(mask_path):
@@ -68,6 +68,7 @@ class Dataset(torch.utils.data.Dataset):
 
         return img, mask, {'img_id': img_id}
     
+
 class TestDataset(torch.utils.data.Dataset):
     def __init__(self, img_ids, img_dir, img_ext, transform=None):
         self.img_ids = img_ids
@@ -80,26 +81,28 @@ class TestDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         img_id = self.img_ids[idx]
-
         img_path = os.path.join(self.img_dir, img_id + self.img_ext)
-
+        
+        # Verificar existencia del archivo
         if not os.path.exists(img_path):
             raise FileNotFoundError(f"Image file not found: {img_path}")
         
+        # Leer imagen en escala de grises
         img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-
         if img is None:
             raise ValueError(f"Failed to load image: {img_path}. "
-                             f"File may be corrupted or in unsupported format.")
+                           f"File may be corrupted or in unsupported format.")
         
-        img = img[..., None]  # [H, W, 1]
-
+        # Añadir dimensión de canal [H, W] -> [H, W, 1]
+        img = img[..., None]
+        
+        # Aplicar transformaciones (solo a la imagen)
         if self.transform is not None:
             augmented = self.transform(image=img)
             img = augmented['image']
-        else:
-            img = img.astype('float32') / 255.0
-            img = img.transpose(2, 0, 1)  # [1, H, W]
-            img = torch.from_numpy(img)
-
-        return img, {'img_id': img_id}
+        
+        # Normalizar y preparar tensor
+        img = img.astype('float32') / 255.0  # Normalizar a [0, 1]
+        img = img.transpose(2, 0, 1)        # [H, W, C] -> [C, H, W]
+        
+        return img, img_id  # Devolver imagen procesada y ID

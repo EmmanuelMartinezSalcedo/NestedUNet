@@ -1,7 +1,7 @@
 import os
 import sys
-import torch
 import yaml
+import torch
 import cv2
 import numpy as np
 from glob import glob
@@ -9,117 +9,141 @@ from tqdm import tqdm
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from archs import NestedUNet
 
-# --- Configuración global ---
-CONFIG_PATH = 'models/processed_data_512_NestedUNet_binary_wDS/config.yml'
-WEIGHTS_PATH = 'models/processed_data_512_NestedUNet_binary_wDS/best_model.pth'
-OUTPUT_FOLDER = 'outputs/nested/'
+# ---------------------
+# TestDataset corregido
+# ---------------------
+class TestDataset(torch.utils.data.Dataset):
+    def __init__(self, img_ids, img_dir, img_ext, transform=None):
+        self.img_ids = img_ids
+        self.img_dir = img_dir
+        self.img_ext = img_ext
+        self.transform = transform
 
-# --- Funciones utilitarias ---
+    def __len__(self):
+        return len(self.img_ids)
+
+    def __getitem__(self, idx):
+        img_id = self.img_ids[idx]
+        img_path = os.path.join(self.img_dir, img_id + self.img_ext)
+        
+        if not os.path.exists(img_path):
+            raise FileNotFoundError(f"Image file not found: {img_path}")
+        
+        img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            raise ValueError(f"Error al leer imagen: {img_path}")
+        
+        # Normalizar ANTES de la transformación
+        img = img.astype(np.float32) / 255.0
+        img = img[..., None]  # [H, W, 1]
+
+        # Aplicar transformación SIN normalización adicional
+        if self.transform is not None:
+            augmented = self.transform(image=img)
+            img = augmented['image']
+        
+        return img, img_id
+
+# ---------------------
+# RUTAS
+# ---------------------
+MODEL_DIR = "models/LIDC-IDRI_NestedUNet_binary_woDS"
+CONFIG_PATH = f"{MODEL_DIR}/config.yml"
+WEIGHTS_PATH = f"{MODEL_DIR}/checkpoints/model_epoch_20.pth"
+
+INPUT_FOLDER = "processed/LIDC-IDRI/stage3-test/images"
+OUTPUT_FOLDER = f"outputs/predicted-{os.path.basename(MODEL_DIR)}"
+
+# ---------------------
+# CONFIG & MODEL
+# ---------------------
 def load_config(path):
-  with open(path, 'r') as f:
-    return yaml.safe_load(f)
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
 
 def load_model(weights_path, config, device):
-  model = NestedUNet(
-    input_channels=config.get('input_channels', 1),
-    deep_supervision=config.get('deep_supervision', True)
-  )
-  model.load_state_dict(torch.load(weights_path, map_location=device))
-  model.to(device)
-  model.eval()
-  return model
+    model = NestedUNet(
+        input_channels=config.get("input_channels", 1),
+        deep_supervision=config.get("deep_supervision", False)
+    )
+    model.load_state_dict(torch.load(weights_path, map_location=device, weights_only=True))
+    model.to(device)
+    model.eval()
+    return model
 
-def get_img_ids(subset, config):
-  img_path = os.path.normpath(os.path.join('outputs', 'original', f"*{config['img_ext']}"))
-  img_files = glob(img_path)
-  img_ids = [os.path.splitext(os.path.basename(p))[0] for p in img_files]
-
-  print(f"📁 Buscando imágenes en: {img_path}")
-  print(f"🖼️ Imágenes encontradas en {subset}: {len(img_ids)}")
-  if len(img_ids) == 0:
-    print(f"❌ No se encontraron imágenes en '{subset}'. Verifica la ruta.")
-  else:
-    print(f"✅ {subset.capitalize()} cargado correctamente")
-    print(f"   Ejemplo de archivos: {img_ids[:3]}")
-  return img_ids
-
-# --- Dataset para test ---
-class TestDataset(torch.utils.data.Dataset):
-  def __init__(self, img_ids, img_dir, img_ext, transform):
-    self.img_ids = img_ids
-    self.img_dir = img_dir
-    self.img_ext = img_ext
-    self.transform = transform
-
-  def __len__(self):
-    return len(self.img_ids)
-
-  def __getitem__(self, idx):
-    img_id = self.img_ids[idx]
-    img_path = os.path.join(self.img_dir, img_id + self.img_ext)
-    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
-      raise ValueError(f"Error al leer imagen: {img_path}")
-    img = img.astype(np.float32) / 255.0
-    img = img[..., None]
-    augmented = self.transform(image=img)
-    img_tensor = augmented['image']
-    return img_tensor, img_id
-
-# --- Predicción ---
-def predict(model, input_tensor, device):
-  with torch.no_grad():
-    input_tensor = input_tensor.to(device)
-    output = model(input_tensor)
-    if isinstance(output, list):
-      output = output[-1]
-    output = torch.sigmoid(output)
-    pred = (output > 0.5).float()
-    return pred
-
-# --- Main ---
+# ---------------------
+# MAIN
+# ---------------------
 def main():
-  config = load_config(CONFIG_PATH)
-  device = 'cuda' if torch.cuda.is_available() else 'cpu'
-  model = load_model(WEIGHTS_PATH, config, device)
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-  test_img_ids = get_img_ids("test", config)
+    print("📄 Cargando configuración...")
+    config = load_config(CONFIG_PATH)
 
-  test_transform = A.Compose([
-    A.Resize(config['input_h'], config['input_w']),
-    A.Normalize(mean=(0.0,), std=(1.0,)),
-    ToTensorV2()
-  ])
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"⚙️ Dispositivo: {device}")
 
-  test_dataset = TestDataset(
-    img_ids=test_img_ids,
-    img_dir=os.path.join('outputs', 'original'),
-    img_ext=config['img_ext'],
-    transform=test_transform
-  )
+    print("📦 Cargando modelo...")
+    model = load_model(WEIGHTS_PATH, config, device)
 
-  test_loader = torch.utils.data.DataLoader(
-    test_dataset,
-    batch_size=config['batch_size'],
-    shuffle=False,
-    num_workers=config['num_workers'],
-    drop_last=False,
-    pin_memory=True
-  )
+    # Cargar imágenes
+    img_ids = sorted([
+        os.path.splitext(f)[0]
+        for f in os.listdir(INPUT_FOLDER)
+        if f.endswith(".png")
+    ])
 
-  os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+    print(f"🖼️ Imágenes encontradas: {len(img_ids)}")
 
-  print(f"🚀 Generando segmentaciones para {len(test_dataset)} imágenes...")
-  for inputs, ids in tqdm(test_loader, desc="Guardando máscaras"):
-    preds = predict(model, inputs, device)
-    for i in range(preds.shape[0]):
-      mask_np = preds[i, 0].cpu().numpy().astype(np.uint8) * 255
-      save_path = os.path.join(OUTPUT_FOLDER, ids[i] + ".png")
-      cv2.imwrite(save_path, mask_np)
+    if len(img_ids) == 0:
+        print("❌ No se encontraron imágenes.")
+        return
 
-  print(f"✅ Segmentaciones guardadas en: {OUTPUT_FOLDER}")
+    # Transformación CORREGIDA (sin A.Normalize)
+    test_transform = A.Compose([
+        A.Resize(config["input_h"], config["input_w"]),
+        # ELIMINADO: A.Normalize(mean=(0.0,), std=(1.0,))
+        ToTensorV2()
+    ])
+
+    test_dataset = TestDataset(
+        img_ids=img_ids,
+        img_dir=INPUT_FOLDER,
+        img_ext=config["img_ext"],
+        transform=test_transform
+    )
+
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset,
+        batch_size=config.get("batch_size", 1),
+        shuffle=False,
+        num_workers=config.get("num_workers", 0),
+        pin_memory=True
+    )
+
+    print("🚀 Generando predicciones...")
+
+    for inputs, img_ids_batch in tqdm(test_loader, desc="Procesando"):
+        inputs = inputs.to(device)
+        
+        with torch.no_grad():
+            out = model(inputs)
+            if isinstance(out, list):
+                out = out[-1]
+
+            pred = torch.sigmoid(out)
+            pred = (pred > 0.5).float()
+
+        # Guardar predicciones
+        for i in range(pred.shape[0]):
+            mask_np = (pred[i, 0].cpu().numpy() * 255).astype(np.uint8)
+            output_path = os.path.join(OUTPUT_FOLDER, f"{img_ids_batch[i]}.png")
+            cv2.imwrite(output_path, mask_np)
+
+    print(f"\n🎉 Predicciones guardadas en: {OUTPUT_FOLDER}\n")
+
 if __name__ == "__main__":
-  main()
+    main()
